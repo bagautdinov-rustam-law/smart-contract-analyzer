@@ -42,11 +42,11 @@
 
 ### 3. Актуальный технологический стек
 - **Frontend**: React 18 + TypeScript, Vite, Tailwind CSS + shadcn/ui, Wouter, TanStack Query
-- **Backend**: Node.js + Express + TypeScript, Drizzle ORM + PostgreSQL, Google Gemini AI API
+- **Backend**: Node.js + Express + TypeScript, Drizzle ORM + PostgreSQL, DeepSeek Thinking Mode API
 - **Инфраструктура**: Vite, ESBuild
 
 ### 4. Подробная инструкция по установке
-- Требования к системе (Node.js 18+, PostgreSQL, Gemini API ключи)
+- Требования к системе (Node.js 18+, PostgreSQL, DeepSeek API ключи)
 - Пошаговая настройка с примерами конфигурации
 - Команды для разработки и продакшена
 - Настройка базы данных
@@ -72,7 +72,7 @@
 - Доступные команды npm
 - Пошаговая инструкция по использованию
 - Описание интерфейса
-- Настройка Google Gemini API
+- Настройка DeepSeek API
 
 ### 9. Обновленная информация об авторе
 - **Мирошниченко Евгений** - старший юрист в консалтинге

@@ -1,7 +1,8 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { type ContractParagraph } from "@shared/schema";
 
-const MODEL_NAME = 'gemini-2.5-flash';
+const MODEL_NAME = "deepseek-reasoner";
+const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
+const THINKING_TOKEN_BUDGET = 4096;
 
 // Конфигурация для разбивки на чанки
 const CHUNKING_CONFIG = {
@@ -17,6 +18,57 @@ const CHUNKING_CONFIG = {
   // Минимальная длина содержательного текста
   MIN_CONTENT_LENGTH: 20,
 };
+
+type DeepSeekUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  reasoning_tokens?: number;
+};
+
+type DeepSeekResponse = {
+  choices?: Array<{
+    finish_reason?: string;
+    message?: {
+      content?: string;
+      reasoning_content?: string;
+    };
+    reasoning_content?: string;
+  }>;
+  usage?: DeepSeekUsage;
+  error?: {
+    message?: string;
+    code?: string;
+    type?: string;
+  };
+};
+
+class DeepSeekApiError extends Error {
+  status?: number;
+  code?: string;
+
+  constructor(message: string, status?: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+
+  get isQuotaExhausted(): boolean {
+    const message = this.message.toLowerCase();
+    return (
+      this.code === "insufficient_quota" ||
+      message.includes("insufficient_quota") ||
+      message.includes("exceeded your current quota") ||
+      message.includes("insufficient balance") ||
+      message.includes("out of credit")
+    );
+  }
+
+  get isRateLimited(): boolean {
+    const message = this.message.toLowerCase();
+    return this.status === 429 || this.code === "rate_limit_exceeded" || message.includes("rate limit");
+  }
+}
 
 // Пул API ключей с механизмом round-robin
 class ApiKeyPool {
@@ -82,7 +134,17 @@ class ApiKeyPool {
   }
 
   // Метод для логирования использования токенов
-  logTokenUsage(operation: string, inputText: string, outputText: string = ''): void {
+  logTokenUsage(operation: string, inputText: string, outputText: string = '', usage?: DeepSeekUsage): void {
+    if (usage) {
+      console.log(`📊 ТОКЕНЫ [${operation}]:`, {
+        prompt: usage.prompt_tokens,
+        completion: usage.completion_tokens,
+        reasoning: usage.reasoning_tokens,
+        total: usage.total_tokens,
+      });
+      return;
+    }
+
     const inputTokens = this.estimateTokens(inputText);
     const outputTokens = this.estimateTokens(outputText);
     const totalTokens = inputTokens + outputTokens;
@@ -94,6 +156,37 @@ class ApiKeyPool {
       inputLength: inputText.length,
       outputLength: outputText.length
     });
+  }
+
+  handleApiError(key: string, error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = error instanceof DeepSeekApiError ? error.status : undefined;
+    const code = error instanceof DeepSeekApiError ? error.code : undefined;
+    const lowerMessage = message.toLowerCase();
+    const isQuotaExhausted =
+      (error instanceof DeepSeekApiError && error.isQuotaExhausted) ||
+      lowerMessage.includes("insufficient_quota") ||
+      lowerMessage.includes("exceeded your current quota") ||
+      lowerMessage.includes("insufficient balance") ||
+      lowerMessage.includes("out of credit");
+
+    const isRateLimited =
+      (error instanceof DeepSeekApiError && error.isRateLimited) ||
+      status === 429 ||
+      code === "rate_limit_exceeded" ||
+      lowerMessage.includes("rate limit");
+
+    if (isQuotaExhausted) {
+      this.markKeyAsExhausted(key);
+      return true;
+    }
+
+    if (isRateLimited) {
+      console.warn(`⚠️ Ключ ${key.substring(0, 10)}... временно ограничен по rate limit, пробуем другой`);
+      return true;
+    }
+
+    return false;
   }
 
   markKeyAsExhausted(key: string): void {
@@ -117,6 +210,82 @@ class ApiKeyPool {
 // Глобальный пул ключей
 const keyPool = new ApiKeyPool();
 
+interface DeepSeekRequestOptions {
+  operation: string;
+  systemInstruction?: string;
+  userPrompt: string;
+  temperature?: number;
+  maxTokens?: number;
+  responseFormat?: "json_object" | "text";
+  stream?: boolean;
+  thinkingBudgetTokens?: number;
+}
+
+async function callDeepSeekChat(
+  apiKey: string,
+  {
+    operation,
+    systemInstruction,
+    userPrompt,
+    temperature = 0.1,
+    maxTokens = 4096,
+    responseFormat = "json_object",
+    stream = false,
+    thinkingBudgetTokens = THINKING_TOKEN_BUDGET,
+  }: DeepSeekRequestOptions
+): Promise<{ content: string; reasoning: string; usage?: DeepSeekUsage; finishReason?: string }> {
+  const body = {
+    model: MODEL_NAME,
+    messages: [
+      ...(systemInstruction ? [{ role: "system", content: systemInstruction }] : []),
+      { role: "user", content: userPrompt },
+    ],
+    temperature,
+    max_tokens: maxTokens,
+    stream,
+    response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
+    thinking: { type: "enabled", budget_tokens: thinkingBudgetTokens },
+  };
+
+  const response = await fetch(DEEPSEEK_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    let errorPayload: DeepSeekResponse | undefined;
+    try {
+      errorPayload = (await response.json()) as DeepSeekResponse;
+    } catch (error) {
+      console.warn("⚠️ Не удалось разобрать тело ошибки DeepSeek", error);
+    }
+
+    const errorMessage =
+      errorPayload?.error?.message || `DeepSeek API responded with status ${response.status}`;
+    const errorCode = errorPayload?.error?.code || errorPayload?.error?.type;
+    throw new DeepSeekApiError(errorMessage, response.status, errorCode);
+  }
+
+  const json = (await response.json()) as DeepSeekResponse;
+  const choice = json.choices?.[0];
+  const content = choice?.message?.content || "";
+  const reasoning = choice?.message?.reasoning_content || choice?.reasoning_content || "";
+  const finishReason = choice?.finish_reason;
+
+  keyPool.logTokenUsage(operation, userPrompt, content, json.usage);
+
+  return {
+    content,
+    reasoning,
+    usage: json.usage,
+    finishReason,
+  };
+}
+
 // Функция для извлечения JSON из "грязного" ответа
 function extractJsonFromResponse(rawResponse: string): any {
   console.log("🔍 ДЕТАЛЬНАЯ ОБРАБОТКА JSON ОТВЕТА:");
@@ -125,7 +294,7 @@ function extractJsonFromResponse(rawResponse: string): any {
   
   // Проверка на пустой ответ
   if (!rawResponse || rawResponse.trim().length === 0) {
-    console.warn("⚠️ Получен пустой ответ от Gemini API");
+    console.warn("⚠️ Получен пустой ответ от DeepSeek API");
     return {
       chunkId: "unknown",
       analysis: []
@@ -474,12 +643,6 @@ async function analyzeChunk(
     const keyToUse = keyPool.getNextKey();
     
     try {
-      const genAI = new GoogleGenerativeAI(keyToUse);
-      const model = genAI.getGenerativeModel({ 
-        model: MODEL_NAME,
-        systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`
-      });
-
       const perspectiveContext = perspective === 'buyer'
         ? { role: 'Покупателя', beneficiary: 'покупателя' }
         : { role: 'Поставщика', beneficiary: 'поставщика' };
@@ -585,88 +748,46 @@ JSON:
 ЗАПОМНИ: 
 - Пункт p4 показывает, что неоднозначные формулировки должны быть "ambiguous" с комментариями
 - Пункт p5 показывает правильный формат для category: null - только нейтральные пункты БЕЗ комментариев!
-- chunkRightsAnalysis должен содержать ТОЛЬКО права из текущего чанка!
-- classifiedClauses должен включать ВСЕ пункты с правами, даже если они "both" или "neutral"`;
-
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: chunkPrompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-          maxOutputTokens: 8000, // Возвращаем обратно - проблема не в лимите
-          topP: 0.95,
-          topK: 64,
-        },
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-        ],
+      const { content, finishReason } = await callDeepSeekChat(keyToUse, {
+        operation: `CHUNK_${chunk.id}`,
+        systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
+        userPrompt: chunkPrompt,
+        temperature: 0.1,
+        maxTokens: 8000,
+        responseFormat: "json_object",
+        thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
       });
 
-      // Проверяем причину завершения
-      const finishReason = result.response?.candidates?.[0]?.finishReason;
-      const usageMetadata = result.response?.usageMetadata;
-      
-      console.log(`📊 ${chunk.id}: finishReason=${finishReason}, usageMetadata:`, usageMetadata);
-      
-      if (finishReason && finishReason !== 'STOP') {
+      if (finishReason && finishReason !== "stop") {
         console.warn(`⚠️ ${chunk.id}: Нестандартное завершение - ${finishReason}`);
-        
-        if (finishReason === 'MAX_TOKENS') {
+        if (finishReason === "length") {
           console.warn(`⚠️ ${chunk.id}: Ответ обрезан из-за лимита токенов - попытаемся восстановить`);
-          // Продолжаем обработку, система восстановления JSON попытается извлечь данные
-        } else if (finishReason === 'OTHER') {
-          console.warn(`⚠️ ${chunk.id}: Завершение по неизвестной причине - возможно внутренние ограничения Gemini`);
-        } else if (finishReason === 'SAFETY') {
-          console.warn(`⚠️ ${chunk.id}: Завершение из-за фильтров безопасности`);
         }
       }
 
-      const rawResponse = result.response.text();
-      console.log(`📝 Сырой ответ для ${chunk.id}:`, rawResponse.substring(0, 300));
+      console.log(`📝 Сырой ответ для ${chunk.id}:`, content.substring(0, 300));
       
-      // Логируем использование токенов
-      keyPool.logTokenUsage(`CHUNK_${chunk.id}`, chunkPrompt, rawResponse);
-      
-      return extractJsonFromResponse(rawResponse);
+      return extractJsonFromResponse(content);
       
     } catch (error: any) {
       lastError = error;
       
-      // Проверяем, является ли это ошибкой 429 (квота исчерпана)
-      if (error.message && error.message.includes('429') && error.message.includes('Resource has been exhausted')) {
-        console.warn(`⚠️ ${chunk.id}: Ключ ${keyToUse.substring(0, 10)}... исчерпал квоту, пробуем следующий`);
-        keyPool.markKeyAsExhausted(keyToUse);
-        
-        // Если есть доступные ключи, пробуем еще раз
-        if (keyPool.getAvailableKeyCount() > 0) {
+      const shouldRetry = keyPool.handleApiError(keyToUse, error);
+
+      if (shouldRetry) {
+        if (keyPool.getAvailableKeyCount() > 0 && attempt < maxRetries - 1) {
           console.log(`🔄 ${chunk.id}: Повторная попытка с другим ключом (попытка ${attempt + 1}/${maxRetries})`);
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Пауза перед повторной попыткой
+          await new Promise(resolve => setTimeout(resolve, 2000));
           continue;
-        } else {
-          console.error(`❌ ${chunk.id}: Все ключи исчерпали квоты`);
-          throw error;
+        }
+        if (keyPool.getAvailableKeyCount() === 0) {
+          console.error(`❌ ${chunk.id}: Все ключи недоступны или исчерпали квоты`);
         }
       }
-      
-      // Для других ошибок делаем простую повторную попытку
-      console.warn(`⚠️ ${chunk.id}: Ошибка (попытка ${attempt + 1}/${maxRetries}):`, error.message);
+
+      console.warn(`⚠️ ${chunk.id}: Ошибка (попытка ${attempt + 1}/${maxRetries}):`, error instanceof Error ? error.message : error);
       if (attempt < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Увеличиваем задержку
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
       }
     }
   }
@@ -780,13 +901,6 @@ async function performFinalStructuralAnalysis(
 ): Promise<any> {
   // onProgress уже вызван в основной функции
   
-  const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`
-  });
-
   // Собираем самые критичные проблемы из каждой категории
   const criticalRisks = allAnalysis
     .filter((a: any) => a.category === 'risk' && a.comment)
@@ -862,31 +976,19 @@ ${topRightsImbalance.length > 0 ? topRightsImbalance.join('\n- ') : 'Дисба�
 }
 
 ВАЖНО: Фокусируйся только на самых серьезных проблемах, которые могут привести к реальным убыткам или правовым рискам.`;
-
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: structuralPrompt }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.1,
-      maxOutputTokens: 8000,
-      topP: 0.95,
-      topK: 64,
-    },
-    safetySettings: [
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-    ],
+  const { content } = await callDeepSeekChat(keyPool.getNextKey(), {
+    operation: "FINAL_STRUCTURAL_ANALYSIS",
+    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
+    userPrompt: structuralPrompt,
+    temperature: 0.1,
+    maxTokens: 8000,
+    responseFormat: "json_object",
+    thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
   });
 
-  const rawResponse = result.response.text();
-  console.log("📊 Сырой ответ итогового структурного анализа:", rawResponse.substring(0, 300));
+  console.log("📊 Сырой ответ итогового структурного анализа:", content.substring(0, 300));
   
-  // Логируем использование токенов
-  keyPool.logTokenUsage('FINAL_STRUCTURAL_ANALYSIS', structuralPrompt, rawResponse);
-  
-  return extractJsonFromResponse(rawResponse);
+  return extractJsonFromResponse(content);
 }
 
 // Старая функция структурного анализа (оставляем для совместимости)
@@ -898,13 +1000,6 @@ async function performStructuralAnalysis(
 ): Promise<any> {
   // onProgress уже вызван в основной функции
   
-  const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`
-  });
-
   // Создаем краткую сводку вместо передачи всех данных
   const summaryResults = chunkResults.map(chunk => {
     const analysis = chunk.analysis || [];
@@ -935,31 +1030,19 @@ ${JSON.stringify(summaryResults, null, 2)}
     "recommendations": ["Ключевая рекомендация 1", "Ключевая рекомендация 2"]
   }
 }`;
-
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: structuralPrompt }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.1,
-      maxOutputTokens: 8000,
-      topP: 0.95,
-      topK: 64,
-    },
-    safetySettings: [
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-      },
-    ],
+  const { content } = await callDeepSeekChat(keyPool.getNextKey(), {
+    operation: "STRUCTURAL_ANALYSIS",
+    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
+    userPrompt: structuralPrompt,
+    temperature: 0.1,
+    maxTokens: 8000,
+    responseFormat: "json_object",
+    thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
   });
 
-  const rawResponse = result.response.text();
-  console.log("📊 Сырой ответ структурного анализа:", rawResponse.substring(0, 300));
+  console.log("📊 Сырой ответ структурного анализа:", content.substring(0, 300));
   
-  // Логируем использование токенов
-  keyPool.logTokenUsage('STRUCTURAL_ANALYSIS', structuralPrompt, rawResponse);
-  
-  return extractJsonFromResponse(rawResponse);
+  return extractJsonFromResponse(content);
 }
 
 // Надежный программный поиск отсутствующих требований (без AI)
@@ -1153,11 +1236,6 @@ async function verifyMissingRequirementsWithAI(
   console.log(`🤖 AI-проверка ${potentiallyMissing.length} потенциально отсутствующих требований`);
   
   const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`
-  });
 
   // Создаем краткую сводку найденных требований
   const foundSummary = foundRequirements
@@ -1184,37 +1262,27 @@ ${potentiallyMissing.map((req, i) => `${i + 1}. ${req}`).join('\n')}
 }`;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: verificationPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-        maxOutputTokens: 4000, // Уменьшаем лимит для экономии
-        topP: 0.95,
-        topK: 64,
-      },
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+    const { content } = await callDeepSeekChat(keyToUse, {
+      operation: "VERIFY_MISSING_REQUIREMENTS",
+      systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
+      userPrompt: verificationPrompt,
+      temperature: 0.1,
+      maxTokens: 4000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
 
-    const rawResponse = result.response.text();
-    console.log("🔍 AI-проверка отсутствующих требований:", rawResponse.substring(0, 200));
+    console.log("🔍 AI-проверка отсутствующих требований:", content.substring(0, 200));
     
-    if (!rawResponse || rawResponse.trim() === '') {
+    if (!content || content.trim() === '') {
       console.log("⚠️ Пустой ответ AI-проверки");
       return { missingRequirements: [] };
     }
     
-    return extractJsonFromResponse(rawResponse);
+    return extractJsonFromResponse(content);
   } catch (error) {
     console.error("❌ Ошибка AI-проверки отсутствующих требований:", error);
-    if (error instanceof Error && error.message.includes('429')) {
-      keyPool.markKeyAsExhausted(keyToUse);
-    }
+    keyPool.handleApiError(keyToUse, error);
     return { missingRequirements: [] };
   }
 }
@@ -1230,11 +1298,6 @@ async function findMissingRequirements(
   // onProgress уже вызван в основной функции
   
   const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`
-  });
 
   const missingPrompt = `Найди до 10 самых важных отсутствующих требований, сравнив чек-лист с выполненными условиями.
 
@@ -1255,37 +1318,28 @@ ${foundConditions.join(', ')}
 }`;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: missingPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-        maxOutputTokens: 8000,
-        topP: 0.95,
-        topK: 64,
-      },
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+    const { content } = await callDeepSeekChat(keyToUse, {
+      operation: "MISSING_REQUIREMENTS",
+      systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
+      userPrompt: missingPrompt,
+      temperature: 0.1,
+      maxTokens: 8000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
 
-    const rawResponse = result.response.text();
-    console.log("🔍 Сырой ответ поиска отсутствующих требований:", rawResponse.substring(0, 300));
+    console.log("🔍 Сырой ответ поиска отсутствующих требований:", content.substring(0, 300));
     
-    if (!rawResponse || rawResponse.trim() === '') {
+    if (!content || content.trim() === '') {
       console.log("⚠️ Пустой ответ, возвращаем пустой список отсутствующих требований");
       return { missingRequirements: [] };
     }
     
-    return extractJsonFromResponse(rawResponse);
+    return extractJsonFromResponse(content);
   } catch (error) {
     console.error("❌ Ошибка при поиске отсутствующих требований:", error);
-    if (error instanceof Error && error.message.includes('429')) {
-      keyPool.markKeyAsExhausted(keyToUse);
-      console.log("🔑 Ключ исчерпан, пробуем другой...");
+    if (keyPool.handleApiError(keyToUse, error)) {
+      console.log("🔑 Ключ недоступен, пробуем другой...");
       return await findMissingRequirements(contractText, checklistText, foundConditions, perspective, onProgress);
     }
     return { missingRequirements: [] };
@@ -1530,13 +1584,8 @@ async function verifyContradictionWithAI(
   },
   perspective: 'buyer' | 'supplier'
 ): Promise<any | null> {
+  const keyToUse = keyPool.getNextKey();
   try {
-    const keyToUse = keyPool.getNextKey();
-    const genAI = new GoogleGenerativeAI(keyToUse);
-    const model = genAI.getGenerativeModel({ 
-      model: MODEL_NAME,
-      systemInstruction: `Ты - эксперт по анализу договоров. Проверяй только реальные противоречия.`
-    });
 
     const verificationPrompt = `Проанализируй два пункта договора на предмет противоречия:
 
@@ -1554,40 +1603,19 @@ async function verifyContradictionWithAI(
   "explanation": "Краткое объяснение",
   "recommendation": "Краткая рекомендация"
 }`;
-
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: verificationPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-        maxOutputTokens: 4000, // Увеличиваем лимит токенов
-        topP: 0.95,
-        topK: 64,
-      },
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+    const { content } = await callDeepSeekChat(keyToUse, {
+      operation: "CONTRADICTION_VERIFICATION",
+      systemInstruction: "Ты - эксперт по анализу договоров. Проверяй только реальные противоречия.",
+      userPrompt: verificationPrompt,
+      temperature: 0.1,
+      maxTokens: 4000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
 
-    const rawResponse = result.response.text();
-    console.log(`🔍 Верификация противоречия: ${rawResponse.substring(0, 200)}`);
+    console.log(`🔍 Верификация противоречия: ${content.substring(0, 200)}`);
     
-    const verification = extractJsonFromResponse(rawResponse);
+    const verification = extractJsonFromResponse(content);
     
     if (verification.isContradiction) {
       return {
@@ -1612,13 +1640,7 @@ async function verifyContradictionWithAI(
     return null;
   } catch (error) {
     console.error('❌ Ошибка при верификации противоречия:', error);
-    
-    // Если ошибка связана с исчерпанием квоты, отмечаем ключ
-    if (error instanceof Error && error.message.includes('429')) {
-      const keyToUse = keyPool.getNextKey();
-      keyPool.markKeyAsExhausted(keyToUse);
-    }
-    
+    keyPool.handleApiError(keyToUse, error);
     return null;
   }
 }
@@ -1669,13 +1691,6 @@ async function findContradictions(
     console.log("🔍 Недостаточно пунктов для поиска противоречий");
     return { contradictions: [] };
   }
-
-  const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`
-  });
 
   const contradictionsPrompt = `Перед тобой анализ ключевых пунктов договора. Твоя задача — найти пары пунктов, которые прямо или косвенно противоречат друг другу.
 
@@ -1742,49 +1757,33 @@ ${JSON.stringify(analyzedSummary, null, 2)}
   console.log(`📝 Первые 500 символов промпта:`, contradictionsPrompt.substring(0, 500));
   console.log(`📝 Последние 200 символов промпта:`, contradictionsPrompt.substring(promptSize - 200));
 
+  let keyUsed: string | null = null;
+
   try {
     console.log(`⚙️ Конфигурация модели: maxOutputTokens=8192, temperature=0.1`);
     
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: contradictionsPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-        maxOutputTokens: 8192, // Увеличиваем до 8192 токенов
-        topP: 0.95,
-        topK: 64,
-      },
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+    keyUsed = keyPool.getNextKey();
+    const { content } = await callDeepSeekChat(keyUsed, {
+      operation: "FIND_CONTRADICTIONS",
+      systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
+      userPrompt: contradictionsPrompt,
+      temperature: 0.1,
+      maxTokens: 8192,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
 
-    // Логирование информации о токенах
-    const usageMetadata = result.response.usageMetadata;
-    if (usageMetadata) {
-      console.log(`🔢 СТАТИСТИКА ТОКЕНОВ:`);
-      console.log(`🔢 Входные токены: ${usageMetadata.promptTokenCount || 'неизвестно'}`);
-      console.log(`🔢 Выходные токены: ${usageMetadata.candidatesTokenCount || 'неизвестно'}`);
-      console.log(`🔢 Всего токенов: ${usageMetadata.totalTokenCount || 'неизвестно'}`);
-    } else {
-      console.log(`⚠️ Информация о токенах недоступна`);
-    }
-
-    const rawResponse = result.response.text();
-    const responseSize = rawResponse.length;
+    const responseSize = content.length;
     console.log(`📤 Размер ответа: ${responseSize} символов`);
-    console.log("🔍 Первые 300 символов ответа:", rawResponse.substring(0, 300));
-    console.log("🔍 Последние 200 символов ответа:", rawResponse.substring(Math.max(0, responseSize - 200)));
+    console.log("🔍 Первые 300 символов ответа:", content.substring(0, 300));
+    console.log("🔍 Последние 200 символов ответа:", content.substring(Math.max(0, responseSize - 200)));
     
-    if (!rawResponse || rawResponse.trim() === '') {
+    if (!content || content.trim() === '') {
       console.log("⚠️ Пустой ответ при поиске противоречий");
       return { contradictions: [] };
     }
     
-    const parsedResult = extractJsonFromResponse(rawResponse);
+    const parsedResult = extractJsonFromResponse(content);
     const contradictions = parsedResult.contradictions || [];
     
     console.log(`🔍 Найдено противоречий: ${contradictions.length}`);
@@ -1796,30 +1795,19 @@ ${JSON.stringify(analyzedSummary, null, 2)}
     console.error("❌ Сообщение ошибки:", error instanceof Error ? error.message : String(error));
     console.error("❌ Полная ошибка:", error);
     
-    let shouldRetry = false;
+    const handled = keyUsed ? keyPool.handleApiError(keyUsed, error) : false;
+    let shouldRetry = handled;
     console.log(`🔍 DEBUG: retryCount = ${retryCount}, MAX_RETRIES = ${MAX_RETRIES}`);
     
     if (error instanceof Error) {
-      if (error.message.includes('429')) {
-        keyPool.markKeyAsExhausted(keyToUse);
-        console.log("🔑 Ключ исчерпан при поиске противоречий (429 ошибка)");
-        shouldRetry = true;
-      } else if (error.message.includes('quota')) {
-        console.log("💰 Превышена квота API");
-        shouldRetry = false; // Не ретраим при превышении квоты
-      } else if (error.message.includes('token')) {
-        console.log("🔢 Ошибка связана с токенами");
-        shouldRetry = false; // Не ретраим при ошибках токенов
-      } else if (error.message.includes('Load failed') || 
-                 error.message.includes('network') || 
-                 error.message.includes('fetch') ||
-                 error.message.includes('connection')) {
+      const message = error.message.toLowerCase();
+      const isNetworkError = message.includes('load failed') || message.includes('network') || message.includes('fetch') || message.includes('connection');
+      const isTokenError = message.includes('token');
+      if (isNetworkError) {
         console.log("🌐 Сетевая ошибка обнаружена");
-        console.log(`🔍 DEBUG: Установлен shouldRetry = true для сетевой ошибки`);
         shouldRetry = true;
-      } else {
+      } else if (!handled && !isTokenError && message) {
         console.log("🔄 Неизвестная ошибка, пробуем повторить");
-        console.log(`🔍 DEBUG: Установлен shouldRetry = true для неизвестной ошибки`);
         shouldRetry = true;
       }
     }
@@ -2061,11 +2049,6 @@ async function findLogicalDefectsWithAI(
   if (suspiciousParagraphs.length === 0) return [];
 
   const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по структурному анализу договоров.`
-  });
 
   const logicalPrompt = `Проанализируй следующие пункты договора на предмет логических ошибок в ссылках:
 
@@ -2095,20 +2078,21 @@ ${Array.from(clauseMap.keys()).sort().join(', ')}
 }`;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: logicalPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-        maxOutputTokens: 4000,
-      },
+    const { content } = await callDeepSeekChat(keyToUse, {
+      operation: "LOGICAL_DEFECTS",
+      systemInstruction: "Ты - эксперт по структурному анализу договоров.",
+      userPrompt: logicalPrompt,
+      temperature: 0.1,
+      maxTokens: 4000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
 
-    const rawResponse = result.response.text();
-    const parsed = extractJsonFromResponse(rawResponse);
+    const parsed = extractJsonFromResponse(content);
     return parsed.logicalDefects || [];
   } catch (error) {
     console.error("❌ Ошибка AI-анализа логических дефектов:", error);
+    keyPool.handleApiError(keyToUse, error);
     return [];
   }
 }
@@ -2437,11 +2421,6 @@ async function classifyClauseParty(
   perspective: 'buyer' | 'supplier'
 ): Promise<Array<{ id: string; party: 'buyer' | 'supplier' | 'both' | 'neutral'; type: string }>> {
   const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по классификации пунктов договоров поставки.`
-  });
 
   const classifyPrompt = `🔧 ОПЕРАЦИЯ: ДОВЕСТИ ДО ИДЕАЛА - Шаг 2: ФИНАЛЬНАЯ ДРЕССИРОВКА AI-КЛАССИФИКАТОРА
 
@@ -2503,55 +2482,41 @@ ${chunk.map(item => `- ${item.id}: ${item.text}`).join('\n\n')}
 ]`;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: classifyPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.0,
-        maxOutputTokens: 1000,
-        topP: 0.95,
-        topK: 64,
-      },
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+    const { content } = await callDeepSeekChat(keyToUse, {
+      operation: "CLASSIFY_RIGHTS",
+      systemInstruction: "Ты - эксперт по классификации пунктов договоров поставки.",
+      userPrompt: classifyPrompt,
+      temperature: 0.0,
+      maxTokens: 1000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
-    let rawResponse = result.response.text();
-    if (!rawResponse || rawResponse.trim().length === 0) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      try {
-        const secondTryResult = await model.generateContent({
-          contents: [{ role: "user", parts: [{ text: classifyPrompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.0,
-            maxOutputTokens: 1000,
-            topP: 0.95,
-            topK: 64,
-          },
-          safetySettings: [
-            {
-              category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-              threshold: HarmBlockThreshold.BLOCK_NONE,
-            },
-          ],
-        });
-        rawResponse = secondTryResult.response.text();
-      } catch (retryError) {}
-    }
-    if (rawResponse && rawResponse.trim().length > 0) {
-      const parsed = extractJsonFromResponse(rawResponse);
+
+    if (content && content.trim().length > 0) {
+      const parsed = extractJsonFromResponse(content);
       return Array.isArray(parsed) ? parsed : [];
-    } else {
-      return [];
     }
+
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const fallbackKey = keyPool.getNextKey();
+    const { content: retryContent } = await callDeepSeekChat(fallbackKey, {
+      operation: "CLASSIFY_RIGHTS_RETRY",
+      systemInstruction: "Ты - эксперт по классификации пунктов договоров поставки.",
+      userPrompt: classifyPrompt,
+      temperature: 0.0,
+      maxTokens: 1000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
+    });
+
+    if (retryContent && retryContent.trim().length > 0) {
+      const parsed = extractJsonFromResponse(retryContent);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+
+    return [];
   } catch (error) {
-    if (error instanceof Error && error.message.includes('429')) {
-      keyPool.markKeyAsExhausted(keyToUse);
-    }
+    keyPool.handleApiError(keyToUse, error);
     return [];
   }
 }
@@ -2702,11 +2667,6 @@ async function analyzeRightsImbalance(
   }
 
   const keyToUse = keyPool.getNextKey();
-  const genAI = new GoogleGenerativeAI(keyToUse);
-  const model = genAI.getGenerativeModel({ 
-    model: MODEL_NAME,
-    systemInstruction: `Ты - эксперт по анализу дисбаланса прав в договорах поставки.`
-  });
 
   const analysisPrompt = `Проанализируй извлеченные права сторон и определи дисбалансы.
 
@@ -2742,27 +2702,19 @@ ${extractedRights.supplierRightsList.map((right, i) => `${i + 1}. ${right}`).joi
 ВАЖНО: Анализируй только предоставленные права, не выдумывай дисбалансы.`;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: analysisPrompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-        maxOutputTokens: 3000, // Еще меньше для фокусированной задачи
-        topP: 0.95,
-        topK: 64,
-      },
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+    const { content } = await callDeepSeekChat(keyToUse, {
+      operation: "RIGHTS_IMBALANCE",
+      systemInstruction: "Ты - эксперт по анализу дисбаланса прав в договорах поставки.",
+      userPrompt: analysisPrompt,
+      temperature: 0.1,
+      maxTokens: 3000,
+      responseFormat: "json_object",
+      thinkingBudgetTokens: THINKING_TOKEN_BUDGET,
     });
 
-    const rawResponse = result.response.text();
-    console.log(`📊 Шаг 5.2: Получен ответ длиной ${rawResponse.length} символов`);
+    console.log(`📊 Шаг 5.2: Получен ответ длиной ${content.length} символов`);
     
-    const parsed = extractJsonFromResponse(rawResponse);
+    const parsed = extractJsonFromResponse(content);
     const rightsImbalance = parsed.rightsImbalance || [];
     const overallConclusion = parsed.overallConclusion || "Анализ дисбаланса прав завершен.";
     
@@ -2771,9 +2723,7 @@ ${extractedRights.supplierRightsList.map((right, i) => `${i + 1}. ${right}`).joi
     
   } catch (error) {
     console.error("❌ Ошибка анализа дисбаланса:", error);
-    if (error instanceof Error && error.message.includes('429')) {
-      keyPool.markKeyAsExhausted(keyToUse);
-    }
+    keyPool.handleApiError(keyToUse, error);
     return { 
       rightsImbalance: [], 
       overallConclusion: "Анализ дисбаланса прав не удался из-за технической ошибки." 
@@ -3217,11 +3167,11 @@ export async function analyzeContractWithGemini(
     }
     
     if (errorMessage?.includes('Resource has been exhausted')) {
-      throw new Error('Превышен лимит запросов к Gemini API. Попробуйте позже или добавьте новые API ключи.');
+      throw new Error('Превышен лимит запросов к DeepSeek API. Попробуйте позже или добавьте новые API ключи.');
     }
     
     if (errorMessage?.includes('не удалось распарсить') || errorMessage?.includes('Failed to parse')) {
-      throw new Error('Не удалось распарсить ответ от Gemini. Проверьте корректность данных и попробуйте снова.');
+      throw new Error('Не удалось распарсить ответ от DeepSeek. Проверьте корректность данных и попробуйте снова.');
     }
     
     throw new Error(`Ошибка при анализе договора: ${errorMessage}`);

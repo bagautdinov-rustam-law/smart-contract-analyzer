@@ -9,9 +9,9 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // API endpoint для получения ключей DeepSeek
+  // API endpoint для получения ключа API DeepSeek
   app.get("/api/deepseek-key", (req, res) => {
-    const apiKey = process.env.DEEPSEEK_API_KEYS || process.env.VITE_DEEPSEEK_API_KEYS;
+    const apiKey = process.env.VITE_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ message: "DeepSeek API key is not configured" });
     }
