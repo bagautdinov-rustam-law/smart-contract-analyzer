@@ -26,9 +26,9 @@ class ApiKeyPool {
   private exhaustedKeys: Set<string> = new Set();
 
   constructor() {
-    const apiKeyEnv = import.meta.env.VITE_API_KEY;
+    const apiKeyEnv = import.meta.env.VITE_DEEPSEEK_API_KEYS;
     if (!apiKeyEnv) {
-      throw new Error("VITE_API_KEY не установлен");
+      throw new Error("VITE_DEEPSEEK_API_KEYS не установлен");
     }
     
     // Поддержка нескольких ключей через запятую

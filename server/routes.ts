@@ -9,11 +9,11 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // API endpoint для получения ключа API Gemini
-  app.get("/api/gemini-key", (req, res) => {
-    const apiKey = process.env.VITE_API_KEY;
+  // API endpoint для получения ключей DeepSeek
+  app.get("/api/deepseek-key", (req, res) => {
+    const apiKey = process.env.DEEPSEEK_API_KEYS || process.env.VITE_DEEPSEEK_API_KEYS;
     if (!apiKey) {
-      return res.status(500).json({ message: "Gemini API key is not configured" });
+      return res.status(500).json({ message: "DeepSeek API key is not configured" });
     }
     res.json({ apiKey });
   });
