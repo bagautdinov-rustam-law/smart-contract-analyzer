@@ -62,6 +62,7 @@
 - Node.js 18+
 - npm или yarn  
 - DeepSeek API ключ(и)
+- DeepSeek Thinking Mode API ключ(и)
 
 ### Локальная разработка
 
@@ -85,6 +86,8 @@ cp env.example .env
 ```env
 # DeepSeek API ключи (можно указать несколько через запятую для увеличения лимитов)
 VITE_API_KEY=your_deepseek_api_key_1,your_deepseek_api_key_2
+# DeepSeek Thinking Mode API ключи (можно указать несколько через запятую для увеличения лимитов)
+VITE_DEEPSEEK_API_KEYS=sk-your_deepseek_thinking_key_1,sk-your_deepseek_thinking_key_2
 
 # Опционально: настройки для разработки
 NODE_ENV=development
