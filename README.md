@@ -175,7 +175,7 @@ smart-contract-analyzer/
 │   │   │   ├── floating-filters.tsx         # Интерактивные фильтры
 │   │   │   └── ...                          # Другие компоненты
 │   │   ├── hooks/                   # Custom React hooks
-│   │   │   ├── use-gemini-analysis.ts       # Хук для анализа через DeepSeek (название сохранено для совместимости)
+│   │   │   ├── use-deepseek-analysis.ts     # Хук для анализа через DeepSeek
 │   │   │   └── use-mobile.tsx               # Хук для мобильной адаптации
 │   │   ├── lib/                     # Утилиты и библиотеки
 │   │   │   ├── gemini.ts                    # Основная логика анализа с DeepSeek Thinking Mode

@@ -7,7 +7,7 @@ import { AnalysisResults } from "@/components/analysis-results";
 import { AnalysisProgress } from "@/components/analysis-progress";
 import { StructuralAnalysisComponent } from "@/components/structural-analysis";
 import { Button } from "@/components/ui/button";
-import { useGeminiAnalysis } from "@/hooks/use-gemini-analysis";
+import { useDeepseekAnalysis } from "@/hooks/use-deepseek-analysis";
 import { exportToDocx } from "@/lib/docx-export";
 import type { ContractParagraph, Contradiction, RightsImbalance, StructuralAnalysis } from "@shared/schema";
 import { ContradictionsResults } from "@/components/contradictions-results";
@@ -185,7 +185,7 @@ export default function ContractAnalyzer() {
     const [showContradictions, setShowContradictions] = useState(true);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-    const { analyzeContract, isLoading, error, progress } = useGeminiAnalysis();
+    const { analyzeContract, isLoading, error, progress } = useDeepseekAnalysis();
     
     // Ссылка на раздел структурного анализа для автоматической прокрутки
     const structuralAnalysisRef = useRef<HTMLDivElement>(null);
