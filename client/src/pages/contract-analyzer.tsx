@@ -353,7 +353,7 @@ export default function ContractAnalyzer() {
                             </Button>
                             <div className="flex items-center space-x-2 text-sm text-gray-600">
                                 <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-                                <span>DeepSeek API подключен</span>
+                                <span>AI API подключен</span>
                             </div>
                         </div>
                     </div>
