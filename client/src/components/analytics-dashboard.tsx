@@ -42,7 +42,7 @@ export function AnalyticsDashboard() {
       const feedback = JSON.parse(localStorage.getItem('analysis_feedback') || '[]') as FeedbackData[];
       
       // Загружаем логи ошибок
-      const errorLogs = JSON.parse(localStorage.getItem('gemini_error_logs') || '[]');
+      const errorLogs = JSON.parse(localStorage.getItem('deepseek_error_logs') || '[]');
 
       // Вычисляем статистику
       const totalAnalyses = feedback.length;
@@ -102,7 +102,7 @@ export function AnalyticsDashboard() {
   const clearData = () => {
     if (confirm('Вы уверены, что хотите очистить все данные аналитики?')) {
       localStorage.removeItem('analysis_feedback');
-      localStorage.removeItem('gemini_error_logs');
+      localStorage.removeItem('deepseek_error_logs');
       loadAnalyticsData();
     }
   };
@@ -324,4 +324,4 @@ export function AnalyticsDashboard() {
       </Card>
     </div>
   );
-} 
+}
