@@ -155,7 +155,7 @@ client/
 │   │   └── analytics.tsx         # Страница аналитики
 │   │
 │   ├── hooks/               # React хуки
-│   │   ├── use-gemini-analysis.ts # Хук для работы с ИИ
+│   │   ├── use-deepseek-analysis.ts # Хук для работы с ИИ
 │   │   ├── use-contract-storage.ts # Хук для локального хранения
 │   │   └── use-export.ts          # Хук для экспорта
 │   │

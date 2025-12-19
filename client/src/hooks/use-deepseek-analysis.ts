@@ -2,7 +2,7 @@ import { useState } from "react";
 import { analyzeContractWithGemini } from "@/lib/gemini";
 import type { ContractParagraph, StructuralAnalysis, Contradiction, RightsImbalance} from "@shared/schema";
 
-export function useGeminiAnalysis() {
+export function useDeepseekAnalysis() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string>("");
