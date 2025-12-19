@@ -185,8 +185,13 @@ export default function ContractAnalyzer() {
     const [showContradictions, setShowContradictions] = useState(true);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-    const { analyzeContract, isLoading, error, progress } = useDeepseekAnalysis();
-    
+    const {
+        analyzeContract,
+        isLoading,
+        error,
+        progress,
+    } = useDeepseekAnalysis();
+
     // Ссылка на раздел структурного анализа для автоматической прокрутки
     const structuralAnalysisRef = useRef<HTMLDivElement>(null);
 
