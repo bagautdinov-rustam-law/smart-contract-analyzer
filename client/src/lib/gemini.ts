@@ -748,6 +748,7 @@ JSON:
 ЗАПОМНИ: 
 - Пункт p4 показывает, что неоднозначные формулировки должны быть "ambiguous" с комментариями
 - Пункт p5 показывает правильный формат для category: null - только нейтральные пункты БЕЗ комментариев!
+`;
       const { content, finishReason } = await callDeepSeekChat(keyToUse, {
         operation: `CHUNK_${chunk.id}`,
         systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
