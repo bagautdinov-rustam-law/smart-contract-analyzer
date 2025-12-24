@@ -19,7 +19,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Базовый URL можно переопределить через DEEPSEEK_API_URL
-  const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || "https://api.artemox.com/v1/chat/completions";
+  // Допускается как полный путь /chat/completions, так и базовый https://api.artemox.com/v1
+  const rawBaseUrl = process.env.DEEPSEEK_API_URL || "https://api.artemox.com/v1";
+  const DEEPSEEK_API_URL = rawBaseUrl.endsWith("/chat/completions")
+    ? rawBaseUrl
+    : `${rawBaseUrl.replace(/\\/?$/, "")}/chat/completions`;
 
   // Прокси для вызовов DeepSeek, чтобы обходить CORS и не раскрывать ключ в браузере
   app.post("/api/deepseek/chat", async (req, res) => {

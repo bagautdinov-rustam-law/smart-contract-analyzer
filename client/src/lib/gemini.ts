@@ -1,7 +1,8 @@
 import { type ContractParagraph } from "@shared/schema";
 
-const MODEL_NAME = "deepseek-reasoner";
-// Прокси на сервер, чтобы не светить ключ и обойти CORS
+// Модель можно переопределить через VITE_DEEPSEEK_MODEL (по умолчанию deepseek-reasoner)
+const MODEL_NAME = import.meta.env.VITE_DEEPSEEK_MODEL || "deepseek-reasoner";
+// ВАЖНО: ходим через серверный прокси, чтобы не светить ключ и не ловить CORS
 const DEEPSEEK_API_URL = "/api/deepseek/chat";
 const THINKING_TOKEN_BUDGET = 4096;
 
