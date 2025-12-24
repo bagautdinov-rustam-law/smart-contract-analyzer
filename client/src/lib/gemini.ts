@@ -1,7 +1,8 @@
 import { type ContractParagraph } from "@shared/schema";
 
 const MODEL_NAME = "deepseek-reasoner";
-const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
+// Прокси на сервер, чтобы не светить ключ и обойти CORS
+const DEEPSEEK_API_URL = "/api/deepseek/chat";
 const THINKING_TOKEN_BUDGET = 4096;
 
 // Конфигурация для разбивки на чанки

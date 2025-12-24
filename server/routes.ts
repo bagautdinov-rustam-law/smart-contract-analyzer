@@ -18,6 +18,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ apiKey });
   });
 
+  // Базовый URL можно переопределить через DEEPSEEK_API_URL
+  const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || "https://api.artemox.com/v1/chat/completions";
+
+  // Прокси для вызовов DeepSeek, чтобы обходить CORS и не раскрывать ключ в браузере
+  app.post("/api/deepseek/chat", async (req, res) => {
+    const apiKeyEnv = process.env.VITE_DEEPSEEK_API_KEYS || process.env.VITE_API_KEY;
+    const apiKey = apiKeyEnv
+      ?.split(",")
+      .map((k) => k.trim())
+      .filter(Boolean)[0];
+
+    if (!apiKey) {
+      return res.status(500).json({ message: "DeepSeek API key is not configured" });
+    }
+
+    try {
+      const upstreamResponse = await fetch(DEEPSEEK_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      const payload = await upstreamResponse
+        .json()
+        .catch(() => null as unknown as Record<string, unknown> | null);
+
+      if (!upstreamResponse.ok) {
+        return res.status(upstreamResponse.status).json(
+          payload ?? {
+            message: "Failed to call DeepSeek API",
+            status: upstreamResponse.status,
+          }
+        );
+      }
+
+      return res.json(payload);
+    } catch (error) {
+      console.error("DeepSeek proxy error:", error);
+      return res.status(500).json({
+        message: "Failed to call DeepSeek API",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // Store contract analysis result
   app.post("/api/analysis", async (req, res) => {
     try {
