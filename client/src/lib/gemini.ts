@@ -236,6 +236,8 @@ async function callDeepSeekChat(
     thinkingBudgetTokens = THINKING_TOKEN_BUDGET,
   }: DeepSeekRequestOptions
 ): Promise<{ content: string; reasoning: string; usage?: DeepSeekUsage; finishReason?: string }> {
+  const isReasonerModel = MODEL_NAME.includes("reasoner") || MODEL_NAME.includes("r1");
+
   const body = {
     model: MODEL_NAME,
     messages: [
@@ -246,7 +248,7 @@ async function callDeepSeekChat(
     max_tokens: maxTokens,
     stream,
     response_format: responseFormat === "json_object" ? { type: "json_object" } : undefined,
-    thinking: { type: "enabled", budget_tokens: thinkingBudgetTokens },
+    ...(isReasonerModel ? { thinking: { type: "enabled", budget_tokens: thinkingBudgetTokens } } : {}),
   };
 
   const response = await fetch(DEEPSEEK_API_URL, {

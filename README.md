@@ -91,6 +91,10 @@ VITE_DEEPSEEK_API_KEYS=sk-your_deepseek_thinking_key_1,sk-your_deepseek_thinking
 
 # Опционально: настройки для разработки
 NODE_ENV=development
+
+# Опционально: параметры стабильности запросов к DeepSeek
+DEEPSEEK_TIMEOUT_MS=60000
+DEEPSEEK_RETRY_COUNT=3
 ```
 
 4. **Запустите приложение:**
