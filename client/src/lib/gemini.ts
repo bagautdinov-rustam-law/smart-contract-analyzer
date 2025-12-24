@@ -1,7 +1,9 @@
 import { type ContractParagraph } from "@shared/schema";
 
-const MODEL_NAME = "deepseek-reasoner";
-const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
+// Модель можно переопределить через VITE_DEEPSEEK_MODEL (по умолчанию deepseek-reasoner)
+const MODEL_NAME = import.meta.env.VITE_DEEPSEEK_MODEL || "deepseek-reasoner";
+// ВАЖНО: ходим через серверный прокси, чтобы не светить ключ и не ловить CORS
+const DEEPSEEK_API_URL = "/api/deepseek/chat";
 const THINKING_TOKEN_BUDGET = 4096;
 
 // Конфигурация для разбивки на чанки
@@ -78,9 +80,9 @@ class ApiKeyPool {
   private exhaustedKeys: Set<string> = new Set();
 
   constructor() {
-    const apiKeyEnv = import.meta.env.VITE_DEEPSEEK_API_KEYS;
+    const apiKeyEnv = import.meta.env.VITE_DEEPSEEK_API_KEYS || import.meta.env.VITE_API_KEY;
     if (!apiKeyEnv) {
-      throw new Error("VITE_DEEPSEEK_API_KEYS не установлен");
+      throw new Error("Не найден ключ: задайте VITE_DEEPSEEK_API_KEYS (или VITE_API_KEY)");
     }
     
     // Поддержка нескольких ключей через запятую
@@ -748,6 +750,7 @@ JSON:
 ЗАПОМНИ: 
 - Пункт p4 показывает, что неоднозначные формулировки должны быть "ambiguous" с комментариями
 - Пункт p5 показывает правильный формат для category: null - только нейтральные пункты БЕЗ комментариев!
+`;
       const { content, finishReason } = await callDeepSeekChat(keyToUse, {
         operation: `CHUNK_${chunk.id}`,
         systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
