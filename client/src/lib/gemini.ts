@@ -78,9 +78,9 @@ class ApiKeyPool {
   private exhaustedKeys: Set<string> = new Set();
 
   constructor() {
-    const apiKeyEnv = import.meta.env.VITE_DEEPSEEK_API_KEYS;
+    const apiKeyEnv = import.meta.env.VITE_DEEPSEEK_API_KEYS || import.meta.env.VITE_API_KEY;
     if (!apiKeyEnv) {
-      throw new Error("VITE_DEEPSEEK_API_KEYS не установлен");
+      throw new Error("Не найден ключ: задайте VITE_DEEPSEEK_API_KEYS (или VITE_API_KEY)");
     }
     
     // Поддержка нескольких ключей через запятую
@@ -748,6 +748,7 @@ JSON:
 ЗАПОМНИ: 
 - Пункт p4 показывает, что неоднозначные формулировки должны быть "ambiguous" с комментариями
 - Пункт p5 показывает правильный формат для category: null - только нейтральные пункты БЕЗ комментариев!
+`;
       const { content, finishReason } = await callDeepSeekChat(keyToUse, {
         operation: `CHUNK_${chunk.id}`,
         systemInstruction: `Ты - эксперт по анализу договоров поставки в России. Анализируй договоры с точки зрения ${perspective === 'buyer' ? 'Покупателя' : 'Поставщика'}.`,
