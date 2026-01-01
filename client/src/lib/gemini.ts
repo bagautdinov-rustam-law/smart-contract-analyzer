@@ -2,8 +2,23 @@ import { type ContractParagraph } from "@shared/schema";
 import OpenAI from "openai";
 // Модель можно переопределить через VITE_DEEPSEEK_MODEL (по умолчанию deepseek-reasoner)
 const MODEL_NAME = import.meta.env.VITE_DEEPSEEK_MODEL || "deepseek-reasoner";
-// ВАЖНО: ходим через серверный прокси, чтобы не светить ключ и не ловить CORS
-const DEEPSEEK_API_URL = "https://api.artemox.com/v1/chat/completions";
+
+// Поддержка как базового URL (https://api.artemox.com/v1), так и полного пути /chat/completions.
+// Если передан относительный путь (например, /api/deepseek/chat), используем его напрямую — так можно ходить через серверный прокси без CORS.
+function buildChatUrl(rawBaseUrl: string): string {
+  if (rawBaseUrl.startsWith("/")) {
+    return rawBaseUrl;
+  }
+
+  return rawBaseUrl.endsWith("/chat/completions")
+    ? rawBaseUrl
+    : `${rawBaseUrl.replace(/\/?$/, "")}/chat/completions`;
+}
+
+// По умолчанию ходим через серверный прокси, чтобы минимизировать CORS/сетеовые ошибки; при необходимости можно задать абсолютный URL.
+const DEEPSEEK_API_URL = buildChatUrl(
+  import.meta.env.VITE_DEEPSEEK_API_URL || "/api/deepseek/chat"
+);
 const THINKING_TOKEN_BUDGET = 4096;
 
 // Конфигурация для разбивки на чанки
