@@ -85,15 +85,17 @@ cp env.example .env
 Отредактируйте `.env` файл:
 ```env
 # DeepSeek API ключи (можно указать несколько через запятую для увеличения лимитов)
-VITE_API_KEY=your_deepseek_api_key_1,your_deepseek_api_key_2
-# DeepSeek Thinking Mode API ключи (можно указать несколько через запятую для увеличения лимитов)
-VITE_DEEPSEEK_API_KEYS=sk-your_deepseek_thinking_key_1,sk-your_deepseek_thinking_key_2
+VITE_API_KEY=your_yandex_api_key
+VITE_DEEPSEEK_API_KEYS=your_yandex_api_key
+DEEPSEEK_API_URL=https://llm.api.cloud.yandex.net/v1
+VITE_DEEPSEEK_MODEL=gpt://your_folder_id/yandexgpt/latest
+YANDEX_FOLDER_ID=your_folder_id
 
 # Опционально: настройки для разработки
 NODE_ENV=development
 
-# Опционально: параметры стабильности запросов к DeepSeek
-DEEPSEEK_TIMEOUT_MS=60000
+# Опционально: параметры стабильности запросов к Yandex AI Studio
+DEEPSEEK_TIMEOUT_MS=120000
 DEEPSEEK_RETRY_COUNT=3
 ```
 
@@ -112,12 +114,13 @@ npm start
 
 Приложение будет доступно по адресу: `http://localhost:5001`
 
-## 🔧 Настройка DeepSeek API
+## 🔧 Настройка Yandex AI Studio API
 
-1. Перейдите в [DeepSeek Platform](https://platform.deepseek.com/)
-2. Создайте ключ доступа с правами на Thinking Mode
-3. Добавьте ключ(и) в переменную окружения `VITE_API_KEY`
-4. Для увеличения лимитов можно использовать несколько ключей через запятую
+1. Перейдите в [Yandex AI Studio](https://aistudio.yandex.ru/)
+2. Создайте API-ключ в Yandex Cloud
+3. Найдите Folder ID в [Yandex Cloud Console](https://console.yandex.cloud/)
+4. Добавьте ключ в `VITE_API_KEY`/`VITE_DEEPSEEK_API_KEYS` и Folder ID в `YANDEX_FOLDER_ID`
+5. Укажите модель в формате `gpt://<FOLDER_ID>/yandexgpt/latest`
 
 ## 📝 Использование
 
@@ -332,7 +335,7 @@ npm run lint:fix    # Исправление ESLint ошибок
 
 ## 🙏 Благодарности
 
-- [DeepSeek](https://platform.deepseek.com/) за Thinking Mode API
+- [Yandex AI Studio](https://aistudio.yandex.ru/) за OpenAI-совместимый API языковых моделей
 - [React](https://reactjs.org/) и [Vite](https://vitejs.dev/) командам за отличные инструменты разработки
 - [Tailwind CSS](https://tailwindcss.com/) и [shadcn/ui](https://ui.shadcn.com/) за удобную систему компонентов
 - Юридическому и ИТ сообществам за обратную связь и тестирование
@@ -340,7 +343,8 @@ npm run lint:fix    # Исправление ESLint ошибок
 ## 🔗 Полезные ссылки
 
 - **Телеграм-канал**: [AI Скрепка: Связь Права и Технологий](https://t.me/+plgepYs_y0M3ODJi)
-- **DeepSeek Platform**: [Получить API ключ](https://platform.deepseek.com/)
+- **Yandex AI Studio**: [Получить API ключ](https://aistudio.yandex.ru/)
+- **Yandex Cloud Console**: [Найти Folder ID](https://console.yandex.cloud/)
 
 
 ---

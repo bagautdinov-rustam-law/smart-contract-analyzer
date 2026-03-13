@@ -40,8 +40,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Базовый URL можно переопределить через DEEPSEEK_API_URL
-  // Допускается как полный путь /chat/completions, так и базовый https://api.artemox.com/v1
-  const rawBaseUrl = process.env.DEEPSEEK_API_URL || "https://api.artemox.com/v1";
+  // Допускается как полный путь /chat/completions, так и базовый https://llm.api.cloud.yandex.net/v1
+  const rawBaseUrl = process.env.DEEPSEEK_API_URL || "https://llm.api.cloud.yandex.net/v1";
   const DEEPSEEK_API_URL = buildChatUrl(rawBaseUrl);
 
   // Прокси для вызовов DeepSeek, чтобы обходить CORS и не раскрывать ключ в браузере
@@ -70,6 +70,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
+            "OpenAI-Project": process.env.YANDEX_FOLDER_ID || "",
           },
           body: JSON.stringify(req.body),
           signal: controller.signal,
