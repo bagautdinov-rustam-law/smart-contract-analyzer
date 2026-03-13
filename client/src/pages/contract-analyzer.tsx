@@ -13,6 +13,7 @@ import type { ContractParagraph, Contradiction, RightsImbalance, StructuralAnaly
 import { ContradictionsResults } from "@/components/contradictions-results";
 import { RightsImbalanceResults } from "@/components/rights-imbalance-results";
 import { AnalysisPerspective, PerspectiveSelector } from "@/components/perspective-selector";
+import { ContractTypeSelector, type ContractType, CONTRACT_TYPE_CONFIG } from "@/components/contract-type-selector";
 import { TableOfContents } from "@/components/table-of-contents";
 import { FloatingFilters } from "@/components/floating-filters";
 import { QualityFeedback } from "@/components/quality-feedback";
@@ -168,6 +169,7 @@ const defaultContractText = `
 
 export default function ContractAnalyzer() {
     const [contractText, setContractText] = useState("");
+    const [contractType, setContractType] = useState<ContractType>('supply');
     const [perspective, setPerspective] = useState<AnalysisPerspective>('buyer');
     const [checklistText, setChecklistText] = useState(buyerChecklist);
     const [riskText, setRiskText] = useState(buyerRisks);
@@ -215,6 +217,20 @@ export default function ContractAnalyzer() {
         }
     }, [structuralAnalysis, isAnalyzing]);
 
+
+    const handleContractTypeChange = (newType: ContractType) => {
+        setContractType(newType);
+        setPerspective('buyer');
+        setContractParagraphs([]);
+        setMissingRequirements([]);
+        setAmbiguousConditions([]);
+        setStructuralAnalysis(undefined);
+        setContradictions([]);
+        setRightsImbalance([]);
+        // На данном этапе чек-листы одинаковые для всех типов
+        setChecklistText(buyerChecklist);
+        setRiskText(buyerRisks);
+    };
 
     const handlePerspectiveChange = (newPerspective: 'buyer' | 'supplier') => {
         setPerspective(newPerspective);
@@ -363,12 +379,12 @@ export default function ContractAnalyzer() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {/* Hero Section */}
                 <div className="text-center mb-12">
-                    <h2 className="text-3xl font-bold text-gray-900 mb-4">AI проверка договоров поставки</h2>
+                    <h2 className="text-3xl font-bold text-gray-900 mb-4">{CONTRACT_TYPE_CONFIG[contractType].heroTitle}</h2>
                     <p className="text-lg text-gray-600 max-w-3xl mx-auto">
                         Установите корпоративные критерии, риски и обязательные условия.
                     </p>
                     <p className="text-lg text-gray-600 max-w-3xl mx-auto">
-                        Сервис проконтролирует, чтобы каждый договор поставки им соответствовал.
+                        Сервис проконтролирует соответствие каждого договора вашим стандартам.
                     </p>
                 </div>
 
@@ -376,17 +392,24 @@ export default function ContractAnalyzer() {
                     {/* Input Panel - Full Width */}
                     <div className="space-y-6">
                         {/* Contract Input and Perspective Selection in parallel */}
-                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                            <div className="lg:col-span-3">
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            <div className="lg:col-span-7">
                                 <ContractInput
                                     value={contractText}
                                     onChange={setContractText}
                                 />
                             </div>
-                            <div className="lg:col-span-1">
+                            <div className="lg:col-span-2">
+                                <ContractTypeSelector
+                                    contractType={contractType}
+                                    onContractTypeChange={handleContractTypeChange}
+                                />
+                            </div>
+                            <div className="lg:col-span-3">
                                 <PerspectiveSelector
                                     perspective={perspective}
                                     onPerspectiveChange={handlePerspectiveChange}
+                                    contractType={contractType}
                                 />
                             </div>
                         </div>
@@ -397,11 +420,13 @@ export default function ContractAnalyzer() {
                                 value={checklistText}
                                 onChange={setChecklistText}
                                 perspective={perspective}
+                                perspectiveLabel={perspective === 'buyer' ? CONTRACT_TYPE_CONFIG[contractType].partyA : CONTRACT_TYPE_CONFIG[contractType].partyB}
                             />
                             <RiskInput
                                 value={riskText}
                                 onChange={setRiskText}
                                 perspective={perspective}
+                                perspectiveLabel={perspective === 'buyer' ? CONTRACT_TYPE_CONFIG[contractType].partyA : CONTRACT_TYPE_CONFIG[contractType].partyB}
                             />
                         </div>
 
@@ -431,7 +456,7 @@ export default function ContractAnalyzer() {
                                     </div>
                                     <div>
                                         <div className="font-medium text-gray-900">Попробуйте пример договора</div>
-                                        <div className="text-sm text-gray-500">Стандартный договор поставки товаров</div>
+                                        <div className="text-sm text-gray-500">Стандартный договор поставки товаров (пример)</div>
                                     </div>
                                 </div>
                             </Button>
