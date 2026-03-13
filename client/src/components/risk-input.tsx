@@ -7,9 +7,10 @@ interface RiskInputProps {
   value: string;
   onChange: (value: string) => void;
   perspective: 'buyer' | 'supplier';
+  perspectiveLabel?: string;
 }
 
-export function RiskInput({ value, onChange, perspective }: RiskInputProps) {
+export function RiskInput({ value, onChange, perspective, perspectiveLabel }: RiskInputProps) {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
       <div className="flex items-center mb-4">
@@ -17,7 +18,7 @@ export function RiskInput({ value, onChange, perspective }: RiskInputProps) {
           <AlertTriangle className="text-red-600" size={16} />
         </div>
         <h3 className="text-lg font-semibold text-gray-900">
-          Критические риски ({perspective === 'buyer' ? 'покупатель' : 'поставщик'})
+          Критические риски ({perspectiveLabel || (perspective === 'buyer' ? 'покупатель' : 'поставщик')})
         </h3>
       </div>
       

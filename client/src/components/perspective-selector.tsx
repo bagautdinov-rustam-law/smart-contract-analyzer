@@ -1,14 +1,18 @@
 import { Users, Building, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { type ContractType, CONTRACT_TYPE_CONFIG } from "@/components/contract-type-selector";
 
 export type AnalysisPerspective = 'buyer' | 'supplier';
 
 interface PerspectiveSelectorProps {
   perspective: 'buyer' | 'supplier';
   onPerspectiveChange: (_perspective: 'buyer' | 'supplier') => void;
+  contractType?: ContractType;
 }
 
-export function PerspectiveSelector({ perspective, onPerspectiveChange }: PerspectiveSelectorProps) {
+export function PerspectiveSelector({ perspective, onPerspectiveChange, contractType = 'supply' }: PerspectiveSelectorProps) {
+  const config = CONTRACT_TYPE_CONFIG[contractType];
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
@@ -27,7 +31,7 @@ export function PerspectiveSelector({ perspective, onPerspectiveChange }: Perspe
           }`}
         >
           <ShoppingCart size={18} />
-          <span className="font-medium">Покупатель</span>
+          <span className="font-medium">{config.partyA}</span>
         </Button>
 
         <Button
@@ -40,19 +44,19 @@ export function PerspectiveSelector({ perspective, onPerspectiveChange }: Perspe
           }`}
         >
           <Building size={18} />
-          <span className="font-medium">Поставщик</span>
+          <span className="font-medium">{config.partyB}</span>
         </Button>
       </div>
 
       <div className="mt-3 p-3 bg-gray-50 rounded-lg">
         <div className="text-sm text-gray-700">
           {perspective === 'buyer' ? (
-            <span>👤 Анализ с позиции покупателя - выявление рисков и невыгодных условий</span>
+            <span>{config.partyAEmoji} Анализ с позиции: {config.partyA} — выявление рисков и невыгодных условий</span>
           ) : (
-            <span>🏢 Анализ с позиции поставщика - проверка обязательств и ограничений</span>
+            <span>{config.partyBEmoji} Анализ с позиции: {config.partyB} — проверка обязательств и ограничений</span>
           )}
         </div>
       </div>
     </div>
   );
-} 
+}

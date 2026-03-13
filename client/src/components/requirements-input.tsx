@@ -7,9 +7,10 @@ interface RequirementsInputProps {
   value: string;
   onChange: (value: string) => void;
   perspective: 'buyer' | 'supplier';
+  perspectiveLabel?: string;
 }
 
-export function RequirementsInput({ value, onChange, perspective }: RequirementsInputProps) {
+export function RequirementsInput({ value, onChange, perspective, perspectiveLabel }: RequirementsInputProps) {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
       <div className="flex items-center mb-4">
@@ -17,7 +18,7 @@ export function RequirementsInput({ value, onChange, perspective }: Requirements
           <FileCheck className="text-green-600" size={16} />
         </div>
         <h3 className="text-lg font-semibold text-gray-900">
-          Корпоративные требования ({perspective === 'buyer' ? 'покупатель' : 'поставщик'})
+          Корпоративные требования ({perspectiveLabel || (perspective === 'buyer' ? 'покупатель' : 'поставщик')})
         </h3>
       </div>
       
